@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PipelineGuard — Airflow Triage Agent</title>
+  <meta name="description" content="AI-powered Airflow DAG failure triage agent. Paste your error log and get instant root cause analysis, Slack messages, and email drafts." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: #080b12;
+      font-family: 'DM Sans', sans-serif;
+      color: #e2e8f0;
+      padding-bottom: 60px;
+    }
+
+    @keyframes spin    { to { transform: rotate(360deg); } }
+    @keyframes fadeIn  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .spin     { display: inline-block; animation: spin 1s linear infinite; }
+    .fade-in  { animation: fadeIn 0.35s ease forwards; }
+
+    /* ── Top bar ── */
+    #topbar {
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 14px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(255,255,255,0.02);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-icon {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      display: flex; align-items: center; justify-content: center; font-size: 14px;
+    }
+    .brand-name  { color: #e2e8f0; font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+    .brand-badge {
+      font-size: 9px; color: #6366f1; background: rgba(99,102,241,0.15);
+      border: 1px solid rgba(99,102,241,0.3); padding: 1px 7px;
+      border-radius: 4px; font-family: 'DM Mono', monospace; letter-spacing: 0.08em;
+    }
+    .integrations { display: flex; gap: 6px; }
+    .int-pill {
+      font-size: 10px; color: #475569;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+      padding: 3px 10px; border-radius: 5px; font-family: 'DM Mono', monospace;
+    }
+
+    /* ── Main ── */
+    #main { max-width: 960px; margin: 0 auto; padding: 28px 24px 0; }
+
+    /* Log input */
+    .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .log-label-wrap { display: flex; align-items: center; gap: 8px; }
+    .log-label { font-size: 11px; color: #64748b; font-family: 'DM Mono', monospace; letter-spacing: 0.06em; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #334155; transition: background 0.3s; }
+    .status-dot.loading { background: #eab308; }
+    .status-dot.done    { background: #22c55e; }
+
+    #load-sample-btn {
+      font-size: 10px; color: #6366f1; background: rgba(99,102,241,0.1);
+      border: 1px solid rgba(99,102,241,0.25); padding: 4px 12px;
+      border-radius: 5px; cursor: pointer; font-family: 'DM Mono', monospace;
+    }
+    #load-sample-btn:hover { background: rgba(99,102,241,0.18); }
+
+    #log-input {
+      width: 100%; background: #0d1117; border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px; padding: 14px 16px;
+      color: #79c0ff; font-size: 11.5px; font-family: 'DM Mono', monospace;
+      line-height: 1.8; resize: vertical; outline: none; caret-color: #6366f1;
+    }
+    #log-input:focus { border-color: rgba(99,102,241,0.35); }
+
+    /* Run button */
+    #run-btn {
+      width: 100%; padding: 14px; margin: 20px 0 28px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none; border-radius: 10px; color: #fff;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      letter-spacing: 0.04em; transition: opacity 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    #run-btn:disabled { background: rgba(99,102,241,0.3); cursor: not-allowed; opacity: 0.6; }
+    #run-btn:not(:disabled):hover { opacity: 0.88; }
+
+    /* Error */
+    #error-box {
+      display: none;
+      background: rgba(255,45,32,0.1); border: 1px solid rgba(255,45,32,0.3);
+      border-radius: 8px; padding: 12px 16px; color: #ff6b6b;
+      font-size: 12px; font-family: 'DM Mono', monospace; margin-bottom: 20px;
+    }
+
+    /* Results */
+    #results { display: none; }
+
+    /* Summary strip */
+    #summary-strip {
+      border-radius: 10px; padding: 14px 18px; margin-bottom: 20px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    }
+    .sum-label {
+      font-size: 9px; color: #64748b; font-family: 'DM Mono', monospace;
+      letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px;
+    }
+    .sum-value          { font-size: 12px; font-weight: 600; }
+    .sum-value.is-mono  { font-family: 'DM Mono', monospace; }
+
+    /* Root cause */
+    .root-cause-card {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px; padding: 14px 18px; margin-bottom: 20px;
+    }
+    .card-label { font-size: 9px; color: #64748b; font-family: 'DM Mono', monospace; letter-spacing: 0.08em; margin-bottom: 6px; }
+    #root-cause-text { font-size: 13px; color: #94a3b8; line-height: 1.7; }
+
+    /* Tabs */
+    .tabs-row { display: flex; gap: 4px; margin-bottom: 16px; align-items: center; }
+    .tab-btn {
+      padding: 8px 20px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      color: #475569; font-size: 12px; cursor: pointer; font-weight: 500;
+      font-family: 'DM Sans', sans-serif; transition: all 0.15s;
+    }
+    .tab-btn.active { border-color: rgba(99,102,241,0.5); background: rgba(99,102,241,0.15); color: #818cf8; }
+    .tab-spacer { margin-left: auto; }
+
+    /* Copy button */
+    #copy-btn {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+      color: #94a3b8; border-radius: 6px; padding: 4px 12px; font-size: 11px;
+      font-family: 'DM Mono', monospace; cursor: pointer; transition: all 0.2s; letter-spacing: 0.05em;
+    }
+    #copy-btn.copied { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.4); color: #22c55e; }
+
+    /* Tab panels */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Slack Preview ── */
+    .slack-container {
+      background: #1a1d21; border-radius: 10px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .slack-topbar {
+      background: #19171d; padding: 8px 14px;
+      display: flex; align-items: center; gap: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .mac-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .slack-channel { color: #5c5961; font-size: 11px; margin-left: 8px; font-family: 'DM Mono', monospace; }
+    .slack-body { padding: 16px 18px; }
+    .slack-bot-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .slack-bot-avatar {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      display: flex; align-items: center; justify-content: center; font-size: 15px;
+    }
+    .slack-bot-name  { color: #c9d1d9; font-weight: 700; font-size: 13px; }
+    .slack-bot-tag   { color: #5c5961; font-size: 11px; margin-left: 8px; }
+    .slack-bot-time  { color: #5c5961; font-size: 11px; margin-left: 8px; }
+    #slack-msg-block { padding-left: 14px; border-radius: 0 6px 6px 0; }
+    #slack-header-text { font-size: 15px; font-weight: 700; color: #c9d1d9; margin-bottom: 6px; }
+    #slack-summary-text { font-size: 13px; color: #8b949e; margin-bottom: 14px; }
+    #slack-fields {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px;
+      background: rgba(255,255,255,0.04); border-radius: 8px;
+      padding: 12px 14px; margin-bottom: 14px;
+    }
+    .s-field-label { font-size: 10px; color: #5c5961; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px; }
+    .s-field-value { font-size: 12px; color: #c9d1d9; }
+    .s-field-value.mono { font-family: 'DM Mono', monospace; }
+    #slack-actions-wrap { margin-bottom: 14px; }
+    .s-actions-label { font-size: 10px; color: #5c5961; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+    .s-action-item { font-size: 12px; color: #c9d1d9; margin-bottom: 5px; padding-left: 4px; }
+    #slack-fix-wrap {
+      background: #0d1117; border-radius: 6px; padding: 10px 12px; margin-bottom: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .s-fix-label { font-size: 10px; color: #5c5961; margin-bottom: 6px; font-family: 'DM Mono', monospace; }
+    #slack-fix-code { margin: 0; font-size: 11px; color: #79c0ff; font-family: 'DM Mono', monospace; white-space: pre-wrap; line-height: 1.6; }
+    #slack-footer { font-size: 10px; color: #3d434a; font-family: 'DM Mono', monospace; }
+
+    /* ── Email Preview ── */
+    .email-container { background: #0f1117; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+    #email-header-bar { padding: 14px 18px; }
+    .email-header-row { display: flex; justify-content: space-between; align-items: flex-start; }
+    .e-field-label { font-size: 12px; color: #64748b; margin-bottom: 4px; font-family: 'DM Mono', monospace; }
+    .e-field-value { font-size: 12px; color: #94a3b8; }
+    #email-sev-badge { font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 4px; letter-spacing: 0.1em; font-family: 'DM Mono', monospace; }
+    #email-subject { font-size: 14px; color: #e2e8f0; font-weight: 600; }
+    .email-body-wrap { padding: 18px 20px; }
+    #email-body { margin: 0; font-size: 12px; color: #94a3b8; font-family: 'DM Mono', monospace; white-space: pre-wrap; line-height: 1.9; }
+
+    /* Downstream impact */
+    #downstream-card {
+      display: none; margin-top: 16px;
+      background: rgba(234,179,8,0.05); border: 1px solid rgba(234,179,8,0.2);
+      border-radius: 10px; padding: 12px 16px;
+    }
+    .ds-label { font-size: 9px; color: #ca8a04; font-family: 'DM Mono', monospace; letter-spacing: 0.08em; margin-bottom: 8px; }
+    #downstream-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ds-tag {
+      font-size: 11px; color: #fbbf24; background: rgba(234,179,8,0.1);
+      border: 1px solid rgba(234,179,8,0.2); padding: 3px 10px;
+      border-radius: 4px; font-family: 'DM Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div id="topbar">
+  <div class="brand">
+    <div class="brand-icon">⚡</div>
+    <span class="brand-name">PipelineGuard</span>
+    <span class="brand-badge">AGENT</span>
+  </div>
+  <div class="integrations">
+    <div class="int-pill">● Gmail</div>
+    <div class="int-pill">● Slack</div>
+  </div>
+</div>
+
+<!-- ── Main ── -->
+<div id="main">
+
+  <!-- Log input -->
+  <div style="margin-bottom:20px">
+    <div class="log-header">
+      <div class="log-label-wrap">
+        <span class="log-label">AIRFLOW ERROR LOG</span>
+        <div class="status-dot" id="status-dot"></div>
+      </div>
+      <button id="load-sample-btn" onclick="loadSample()">LOAD SAMPLE</button>
+    </div>
+    <textarea id="log-input" rows="9" placeholder="Paste your Airflow DAG failure log here..."></textarea>
+  </div>
+
+  <!-- Run button -->
+  <button id="run-btn" onclick="runTriage()">⚡ Run Triage Agent</button>
+
+  <!-- Error -->
+  <div id="error-box"></div>
+
+  <!-- ── Results ── -->
+  <div id="results">
+
+    <!-- Summary strip -->
+    <div id="summary-strip">
+      <div>
+        <div class="sum-label">Severity</div>
+        <div class="sum-value is-mono" id="sum-severity"></div>
+      </div>
+      <div>
+        <div class="sum-label">Error Type</div>
+        <div class="sum-value" id="sum-error-type"></div>
+      </div>
+      <div>
+        <div class="sum-label">Failed Task</div>
+        <div class="sum-value is-mono" id="sum-failed-task"></div>
+      </div>
+      <div>
+        <div class="sum-label">DAG</div>
+        <div class="sum-value is-mono" id="sum-dag"></div>
+      </div>
+    </div>
+
+    <!-- Root cause -->
+    <div class="root-cause-card">
+      <div class="card-label">ROOT CAUSE</div>
+      <p id="root-cause-text"></p>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs-row">
+      <button class="tab-btn active" id="tab-slack" onclick="setTab('slack')">💬 Slack Message</button>
+      <button class="tab-btn"        id="tab-email" onclick="setTab('email')">✉️ Email</button>
+      <div class="tab-spacer"></div>
+      <button id="copy-btn" onclick="copyContent()">COPY</button>
+    </div>
+
+    <!-- Slack panel -->
+    <div class="tab-panel active" id="panel-slack">
+      <div class="slack-container">
+        <div class="slack-topbar">
+          <div class="mac-dot" style="background:#ff5f57"></div>
+          <div class="mac-dot" style="background:#febc2e"></div>
+          <div class="mac-dot" style="background:#28c840"></div>
+          <span class="slack-channel">#amex-de-alerts</span>
+        </div>
+        <div class="slack-body">
+          <div class="slack-bot-row">
+            <div class="slack-bot-avatar">⚡</div>
+            <div>
+              <span class="slack-bot-name">PipelineGuard</span>
+              <span class="slack-bot-tag">APP</span>
+              <span class="slack-bot-time" id="slack-time"></span>
+            </div>
+          </div>
+          <div id="slack-msg-block">
+            <div id="slack-header-text"></div>
+            <div id="slack-summary-text"></div>
+            <div id="slack-fields"></div>
+            <div id="slack-actions-wrap" style="display:none">
+              <div class="s-actions-label">Action Required</div>
+              <div id="slack-actions"></div>
+            </div>
+            <div id="slack-fix-wrap" style="display:none">
+              <div class="s-fix-label">// suggested fix</div>
+              <pre id="slack-fix-code"></pre>
+            </div>
+            <div id="slack-footer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Email panel -->
+    <div class="tab-panel" id="panel-email">
+      <div class="email-container">
+        <div id="email-header-bar">
+          <div class="email-header-row">
+            <div>
+              <div class="e-field-label">TO</div>
+              <div class="e-field-value" id="email-to"></div>
+            </div>
+            <div id="email-sev-badge"></div>
+          </div>
+          <div style="margin-top:10px">
+            <div class="e-field-label">SUBJECT</div>
+            <div id="email-subject"></div>
+          </div>
+        </div>
+        <div class="email-body-wrap">
+          <pre id="email-body"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Downstream impact -->
+    <div id="downstream-card">
+      <div class="ds-label">⚠ DOWNSTREAM IMPACT</div>
+      <div id="downstream-tags"></div>
+    </div>
+
+  </div><!-- /#results -->
+</div><!-- /#main -->
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const SAMPLE_LOG = `[2025-04-04 03:42:17] {taskinstance.py:1482} ERROR - Task failed with exception
+Traceback (most recent call last):
+  File "/opt/airflow/dags/pipeline_transactions.py", line 87, in execute
+    rows = bq_client.query(sql).result(timeout=300)
+  File "/usr/local/lib/python3.9/site-packages/google/cloud/bigquery/job/query.py", line 1234
+    raise exceptions.BadRequest(str(exc))
+google.api_core.exceptions.BadRequest: 400 Unrecognized name: merchant_category_code; 
+Did you mean merchant_cat_code? At [3:5]
+
+DAG: amex_pipeline_transactions
+Task: load_merchant_data_to_bq
+Run: scheduled__2025-04-04T03:40:00+00:00
+Operator: BigQueryInsertJobOperator
+Try: 3 of 3 (max retries exhausted)
+
+Upstream dependencies:
+  ✓ extract_raw_transactions (success)
+  ✓ validate_schema (success)
+  ✗ load_merchant_data_to_bq (FAILED)
+  ↻ downstream: daily_spend_summary (blocked)
+  ↻ downstream: merchant_analytics_report (blocked)`;
+
+const SYSTEM_PROMPT = `You are an expert Airflow / data pipeline incident analyst for a data engineering team at a financial company.
+
+When given an Airflow error log, analyze it and return ONLY a valid JSON object (no markdown, no preamble) with this exact structure:
+
+{
+  "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+  "dag_id": "string",
+  "failed_task": "string",
+  "root_cause": "string (1-2 sentences, plain English)",
+  "error_type": "string (e.g. Schema Mismatch, Timeout, Auth Error, etc.)",
+  "downstream_impact": ["list of blocked downstream tasks"],
+  "immediate_fix": "string (concrete code or config fix)",
+  "prevention": "string (how to prevent recurrence)",
+  "email": {
+    "subject": "string",
+    "to": "data-engineering@company.com",
+    "body": "string (professional, well-formatted plain text email body with sections: INCIDENT SUMMARY, ROOT CAUSE, IMPACT, IMMEDIATE ACTION REQUIRED, PREVENTION. Use line breaks for readability)"
+  },
+  "slack": {
+    "header": "string (short punchy header with an emoji)",
+    "severity_emoji": "🔴" | "🟠" | "🟡" | "🟢",
+    "summary": "string (1 sentence)",
+    "fields": [{"label": "string", "value": "string"}],
+    "action_items": ["string array of action items with emoji prefix"],
+    "fix_snippet": "string (the code/SQL fix, or null if not applicable)",
+    "footer": "string (e.g. 'Auto-triaged by PipelineGuard · amex-de-alerts')"
+  }
+}`;
+
+const SEV_COLORS = {
+  CRITICAL: { bg: "#ff2d20", text: "#fff", light: "rgba(255,45,32,0.12)", border: "rgba(255,45,32,0.35)" },
+  HIGH:     { bg: "#f97316", text: "#fff", light: "rgba(249,115,22,0.12)", border: "rgba(249,115,22,0.35)" },
+  MEDIUM:   { bg: "#eab308", text: "#000", light: "rgba(234,179,8,0.12)",  border: "rgba(234,179,8,0.35)"  },
+  LOW:      { bg: "#22c55e", text: "#fff", light: "rgba(34,197,94,0.12)",  border: "rgba(34,197,94,0.35)"  },
+};
+
+// ── State ──────────────────────────────────────────────────────────────────
+let currentResult = null;
+let activeTab = "slack";
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.getElementById("log-input").value = SAMPLE_LOG;
+document.getElementById("slack-time").textContent =
+  "Today at " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function loadSample() {
+  document.getElementById("log-input").value = SAMPLE_LOG;
+}
+
+function setStatus(state) {
+  document.getElementById("status-dot").className = "status-dot " + (state || "");
+}
+
+function setTab(tab) {
+  activeTab = tab;
+  ["slack", "email"].forEach(t => {
+    document.getElementById("tab-" + t).className   = "tab-btn" + (t === tab ? " active" : "");
+    document.getElementById("panel-" + t).className = "tab-panel" + (t === tab ? " active" : "");
+  });
+}
+
+function copyContent() {
+  if (!currentResult) return;
+  let text = "";
+  if (activeTab === "slack") {
+    const s = currentResult.slack;
+    text = `${s.severity_emoji} ${s.header}\n${s.summary}\n\n${(s.action_items || []).join("\n")}`;
+  } else {
+    text = `Subject: ${currentResult.email.subject}\n\n${currentResult.email.body}`;
+  }
+  navigator.clipboard.writeText(text);
+  const btn = document.getElementById("copy-btn");
+  btn.textContent = "✓ COPIED";
+  btn.classList.add("copied");
+  setTimeout(() => { btn.textContent = "COPY"; btn.classList.remove("copied"); }, 1800);
+}
+
+// ── Triage ─────────────────────────────────────────────────────────────────
+async function runTriage() {
+  const log = document.getElementById("log-input").value.trim();
+  if (!log) return;
+
+  const btn = document.getElementById("run-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⟳</span> Agent is triaging...';
+  document.getElementById("error-box").style.display = "none";
+  document.getElementById("results").style.display = "none";
+  setStatus("loading");
+
+  try {
+    const resp = await fetch("/api/triage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: `Analyze this Airflow error log:\n\n${log}` }],
+      }),
+    });
+
+    const data = await resp.json();
+    const raw  = data.content?.[0]?.text || "";
+    const clean = raw.replace(/```json|```/g, "").trim();
+    currentResult = JSON.parse(clean);
+
+    renderResults(currentResult);
+    setStatus("done");
+  } catch (e) {
+    const box = document.getElementById("error-box");
+    box.textContent = "Triage failed — check the log format or try again. (" + e.message + ")";
+    box.style.display = "block";
+    setStatus("");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "⚡ Run Triage Agent";
+  }
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderResults(result) {
+  const sev = result.severity || "HIGH";
+  const col = SEV_COLORS[sev] || SEV_COLORS.HIGH;
+
+  // Summary strip
+  const strip = document.getElementById("summary-strip");
+  strip.style.background = col.light;
+  strip.style.border = `1px solid ${col.border}`;
+  [
+    ["sum-severity",   result.severity],
+    ["sum-error-type", result.error_type],
+    ["sum-failed-task",result.failed_task],
+    ["sum-dag",        result.dag_id],
+  ].forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    el.textContent = val || "—";
+    el.style.color = col.bg;
+  });
+
+  // Root cause
+  document.getElementById("root-cause-text").textContent = result.root_cause || "";
+
+  // ── Slack ──
+  const slack = result.slack || {};
+  document.getElementById("slack-msg-block").style.borderLeft = `3px solid ${col.bg}`;
+  document.getElementById("slack-header-text").textContent  = (slack.severity_emoji || "") + " " + (slack.header  || "");
+  document.getElementById("slack-summary-text").textContent = slack.summary || "";
+
+  // Fields
+  const fieldsEl = document.getElementById("slack-fields");
+  fieldsEl.innerHTML = (slack.fields || []).map(f => {
+    const mono = /dag|task/i.test(f.label || "");
+    return `<div>
+      <div class="s-field-label">${f.label}</div>
+      <div class="s-field-value${mono ? " mono" : ""}">${f.value}</div>
+    </div>`;
+  }).join("");
+
+  // Action items
+  const actionsEl = document.getElementById("slack-actions");
+  const actionsWrap = document.getElementById("slack-actions-wrap");
+  if (slack.action_items?.length) {
+    actionsEl.innerHTML = slack.action_items.map(i => `<div class="s-action-item">${i}</div>`).join("");
+    actionsWrap.style.display = "block";
+  } else {
+    actionsWrap.style.display = "none";
+  }
+
+  // Fix snippet
+  const fixWrap = document.getElementById("slack-fix-wrap");
+  if (slack.fix_snippet) {
+    document.getElementById("slack-fix-code").textContent = slack.fix_snippet;
+    fixWrap.style.display = "block";
+  } else {
+    fixWrap.style.display = "none";
+  }
+
+  document.getElementById("slack-footer").textContent = slack.footer || "";
+
+  // ── Email ──
+  const email = result.email || {};
+  const emailHdr = document.getElementById("email-header-bar");
+  emailHdr.style.background   = col.light;
+  emailHdr.style.borderBottom = `1px solid ${col.border}`;
+  document.getElementById("email-to").textContent      = email.to      || "";
+  document.getElementById("email-subject").textContent = email.subject || "";
+  document.getElementById("email-body").textContent    = email.body    || "";
+  const badge = document.getElementById("email-sev-badge");
+  badge.textContent    = sev;
+  badge.style.background = col.bg;
+  badge.style.color      = col.text;
+
+  // ── Downstream impact ──
+  const dsCard = document.getElementById("downstream-card");
+  const dsTags = document.getElementById("downstream-tags");
+  if (result.downstream_impact?.length) {
+    dsTags.innerHTML = result.downstream_impact.map(t => `<span class="ds-tag">${t}</span>`).join("");
+    dsCard.style.display = "block";
+  } else {
+    dsCard.style.display = "none";
+  }
+
+  // Show results with animation
+  setTab("slack");
+  const resultsEl = document.getElementById("results");
+  resultsEl.style.display = "block";
+  resultsEl.classList.remove("fade-in");
+  void resultsEl.offsetWidth; // force reflow
+  resultsEl.classList.add("fade-in");
+}
+</script>
+</body>
+</html>
