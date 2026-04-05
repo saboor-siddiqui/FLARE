@@ -8,13 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-app = FastAPI(title="PipelineGuard — Airflow Triage Agent")
+app = FastAPI(title="FLARE — Airflow Triage Agent")
 
 # Enable CORS for frontend requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -22,12 +22,6 @@ app.add_middleware(
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 HTML_PATH = pathlib.Path(__file__).parent / "index.html"
-
-
-def require_api_key():
-    """Ensure API key is available, raising an error if not."""
-    if not API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY environment variable is required")
 
 # Reusable HTTP client with connection pooling and optimized timeouts
 _http_client: httpx.AsyncClient | None = None

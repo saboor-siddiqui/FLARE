@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PipelineGuard — Airflow Triage Agent</title>
+  <title>FLARE — Airflow Triage Agent</title>
   <meta name="description" content="AI-powered Airflow DAG failure triage agent. Paste your error log and get instant root cause analysis, Slack messages, and email drafts." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -219,7 +219,7 @@
 <div id="topbar">
   <div class="brand">
     <div class="brand-icon">⚡</div>
-    <span class="brand-name">PipelineGuard</span>
+    <span class="brand-name">FLARE</span>
     <span class="brand-badge">AGENT</span>
   </div>
   <div class="integrations">
@@ -299,7 +299,7 @@
           <div class="slack-bot-row">
             <div class="slack-bot-avatar">⚡</div>
             <div>
-              <span class="slack-bot-name">PipelineGuard</span>
+              <span class="slack-bot-name">FLARE</span>
               <span class="slack-bot-tag">APP</span>
               <span class="slack-bot-time" id="slack-time"></span>
             </div>
@@ -354,6 +354,16 @@
 </div><!-- /#main -->
 
 <script>
+// ── Utilities ──────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────
 const SAMPLE_LOG = `[2025-04-04 03:42:17] {taskinstance.py:1482} ERROR - Task failed with exception
 Traceback (most recent call last):
@@ -402,7 +412,7 @@ When given an Airflow error log, analyze it and return ONLY a valid JSON object 
     "fields": [{"label": "string", "value": "string"}],
     "action_items": ["string array of action items with emoji prefix"],
     "fix_snippet": "string (the code/SQL fix, or null if not applicable)",
-    "footer": "string (e.g. 'Auto-triaged by PipelineGuard · amex-de-alerts')"
+    "footer": "string (e.g. 'Auto-triaged by FLARE · amex-de-alerts')"
   }
 }`;
 
@@ -531,8 +541,8 @@ function renderResults(result) {
   fieldsEl.innerHTML = (slack.fields || []).map(f => {
     const mono = /dag|task/i.test(f.label || "");
     return `<div>
-      <div class="s-field-label">${f.label}</div>
-      <div class="s-field-value${mono ? " mono" : ""}">${f.value}</div>
+      <div class="s-field-label">${escapeHtml(f.label)}</div>
+      <div class="s-field-value${mono ? " mono" : ""}">${escapeHtml(f.value)}</div>
     </div>`;
   }).join("");
 
@@ -540,7 +550,7 @@ function renderResults(result) {
   const actionsEl = document.getElementById("slack-actions");
   const actionsWrap = document.getElementById("slack-actions-wrap");
   if (slack.action_items?.length) {
-    actionsEl.innerHTML = slack.action_items.map(i => `<div class="s-action-item">${i}</div>`).join("");
+    actionsEl.innerHTML = slack.action_items.map(i => `<div class="s-action-item">${escapeHtml(i)}</div>`).join("");
     actionsWrap.style.display = "block";
   } else {
     actionsWrap.style.display = "none";
@@ -574,7 +584,7 @@ function renderResults(result) {
   const dsCard = document.getElementById("downstream-card");
   const dsTags = document.getElementById("downstream-tags");
   if (result.downstream_impact?.length) {
-    dsTags.innerHTML = result.downstream_impact.map(t => `<span class="ds-tag">${t}</span>`).join("");
+    dsTags.innerHTML = result.downstream_impact.map(t => `<span class="ds-tag">${escapeHtml(t)}</span>`).join("");
     dsCard.style.display = "block";
   } else {
     dsCard.style.display = "none";
