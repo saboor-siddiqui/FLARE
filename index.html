@@ -317,6 +317,7 @@
               <pre id="slack-fix-code"></pre>
             </div>
             <div id="slack-footer"></div>
+            <div id="slack-send-status" style="display:none;margin-top:8px;font-size:11px;opacity:0.7;"></div>
           </div>
         </div>
       </div>
@@ -465,6 +466,27 @@ function copyContent() {
   setTimeout(() => { btn.textContent = "COPY"; btn.classList.remove("copied"); }, 1800);
 }
 
+// ── Slack Send ─────────────────────────────────────────────────────────────
+async function sendToSlack(slack) {
+  const statusEl = document.getElementById("slack-send-status");
+  statusEl.textContent = "⚡ Sending to Slack…";
+  statusEl.style.display = "block";
+  try {
+    const resp = await fetch("/api/send-slack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(slack),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || resp.statusText);
+    }
+    statusEl.textContent = "✓ Sent to Slack";
+  } catch (e) {
+    statusEl.textContent = "⚠ Slack send failed: " + e.message;
+  }
+}
+
 // ── Triage ─────────────────────────────────────────────────────────────────
 async function runTriage() {
   const log = document.getElementById("log-input").value.trim();
@@ -489,6 +511,10 @@ async function runTriage() {
       }),
     });
 
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${resp.status}`);
+    }
     const data = await resp.json();
     const raw  = data.content?.[0]?.text || "";
     const clean = raw.replace(/```json|```/g, "").trim();
@@ -496,6 +522,7 @@ async function runTriage() {
 
     renderResults(currentResult);
     setStatus("done");
+    sendToSlack(currentResult.slack);
   } catch (e) {
     const box = document.getElementById("error-box");
     box.textContent = "Triage failed — check the log format or try again. (" + e.message + ")";
